@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+.env
+*.csv
+conn_test.py
+test.py
+get_token.py
