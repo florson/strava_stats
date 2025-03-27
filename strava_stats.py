@@ -2,33 +2,39 @@ from dotenv import load_dotenv
 import os
 import requests
 import pandas as pd
+import time
 from datetime import datetime
 
-# Załaduj zmienne środowiskowe z pliku .env
 load_dotenv(override=True)
 
 class StravaAPI:
     def __init__(self):
-        """
-        Inicjalizacja klienta Strava API używając zmiennych środowiskowych
-        """
-        # Pobierz dane uwierzytelniające z zmiennych środowiskowych
         self.client_id = os.getenv('STRAVA_CLIENT_ID')
         self.client_secret = os.getenv('STRAVA_CLIENT_SECRET')
         self.refresh_token = os.getenv('STRAVA_REFRESH_TOKEN')
         self.access_token = None
+        self.request_count = 0
+        self.last_request_time = datetime.now()
         
-        # Sprawdź czy wszystkie wymagane zmienne są ustawione
         if not all([self.client_id, self.client_secret, self.refresh_token]):
             raise ValueError("Brakuje wymaganych zmiennych środowiskowych!")
         
-        # Od razu pobierz access token
-        print("Inicjalizacja połączenia ze Stravą...")
         self.get_access_token()
+    
+    def handle_rate_limit(self):
+        self.request_count += 1
         
+        if self.request_count >= 90:  # Bezpieczny margines przed limitem 100
+            time_passed = (datetime.now() - self.last_request_time).total_seconds()
+            if time_passed < 900:  # 15 minut w sekundach
+                sleep_time = 900 - time_passed
+                print(f"Osiągnięto limit zapytań. Oczekiwanie {sleep_time:.0f} sekund...")
+                time.sleep(sleep_time)
+            self.request_count = 0
+            self.last_request_time = datetime.now()
+    
     def get_access_token(self):
-        """Pobiera nowy access token używając refresh tokena"""
-        print("Pobieranie nowego access tokena...")
+        self.handle_rate_limit()
         auth_url = "https://www.strava.com/oauth/token"
         payload = {
             'client_id': self.client_id,
@@ -37,93 +43,75 @@ class StravaAPI:
             'grant_type': 'refresh_token'
         }
         
-        try:
-            response = requests.post(auth_url, data=payload)
-            response.raise_for_status()  # Zgłosi wyjątek jeśli status != 200
-            self.access_token = response.json()['access_token']
-            print("Pomyślnie pobrano nowy access token")
-            return self.access_token
-        except requests.exceptions.RequestException as e:
-            print(f"Błąd podczas pobierania access tokena: {e}")
-            return None
+        response = requests.post(auth_url, data=payload)
+        response.raise_for_status()
+        self.access_token = response.json()['access_token']
+        return self.access_token
 
     def get_activities(self, page=1, per_page=30):
-        """Pobiera aktywności ze Stravy"""
-        print(f"Pobieranie strony {page} aktywności...")
-        
+        self.handle_rate_limit()
         if not self.access_token:
-            if not self.get_access_token():
-                return None
+            self.get_access_token()
             
         activities_url = "https://www.strava.com/api/v3/athlete/activities"
         headers = {'Authorization': f'Bearer {self.access_token}'}
         params = {'page': page, 'per_page': per_page}
         
-        try:
-            response = requests.get(activities_url, headers=headers, params=params)
-            response.raise_for_status()
-            activities = response.json()
-            print(f"Pomyślnie pobrano {len(activities)} aktywności")
-            return activities
-        except requests.exceptions.RequestException as e:
-            print(f"Błąd podczas pobierania aktywności: {e}")
-            return None
+        response = requests.get(activities_url, headers=headers, params=params)
+        response.raise_for_status()
+        return response.json()
 
-def save_activities_to_csv(activities, filename='strava_activities.csv'):
-    """Zapisuje aktywności do pliku CSV"""
-    if not activities:
-        print("Brak aktywności do zapisania")
-        return
+    def get_activity_details(self, activity_id):
+        self.handle_rate_limit()
+        if not self.access_token:
+            self.get_access_token()
+            
+        activity_url = f"https://www.strava.com/api/v3/activities/{activity_id}"
+        headers = {'Authorization': f'Bearer {self.access_token}'}
         
-    # Przekształć listę aktywności w DataFrame
-    df = pd.DataFrame(activities)
-    
-    # Wybierz najbardziej przydatne kolumny
-    useful_columns = [
-        'name', 'type', 'start_date_local', 'distance',
-        'moving_time', 'elapsed_time', 'total_elevation_gain',
-        'average_speed', 'max_speed', 'average_heartrate',
-        'max_heartrate'
-    ]
-
-    # Wybierz tylko te kolumny, które istnieją w danych
-    columns_to_use = [col for col in useful_columns if col in df.columns]
-    df = df[columns_to_use]
-
-    # Konwersja jednostek
-    if 'distance' in df.columns:
-        df['distance'] = df['distance'] / 1000  # na kilometry
-        
-    if 'average_speed' in df.columns:
-        df['average_speed'] = df['average_speed'] * 3.6  # na km/h
-        
-    if 'max_speed' in df.columns:
-        df['max_speed'] = df['max_speed'] * 3.6  # na km/h
-    
-    # Zapisz do CSV
-    df.to_csv(filename, index=False)
-    print(f"Zapisano aktywności do pliku {filename}")
-    
-    # Wyświetl podstawowe statystyki
-    print("\nPodstawowe statystyki:")
-    print(f"Liczba aktywności: {len(df)}")
-    if 'distance' in df.columns:
-        print(f"Całkowity dystans: {df['distance'].sum():.2f} km")
-    if 'type' in df.columns:
-        print("\nLiczba aktywności według typu:")
-        print(df['type'].value_counts())
+        response = requests.get(activity_url, headers=headers)
+        response.raise_for_status()
+        return response.json()
 
 def main():
     try:
-        # Utwórz instancję API
         strava = StravaAPI()
+        all_activities = []
+        page = 5
+        per_page = 50
         
-        # Pobierz aktywności
-        activities = strava.get_activities(page=1, per_page=50)
+        # Najpierw pobierz listę aktywności
+        for current_page in range(1, page + 1):
+            activities = strava.get_activities(page=current_page, per_page=per_page)
+            if not activities:
+                break
+            all_activities.extend(activities)
+            print(f"Pobrano stronę {current_page}, łącznie {len(all_activities)} aktywności")
         
-        # Zapisz do pliku i wyświetl statystyki
-        if activities:
-            save_activities_to_csv(activities)
+        # Przetwórz pobrane aktywności
+        detailed_activities = []
+        for i, activity in enumerate(all_activities, 1):
+            print(f"Pobieranie szczegółów aktywności {i}/{len(all_activities)}")
+            details = strava.get_activity_details(activity['id'])
+            
+            # Wybierz tylko potrzebne pola
+            clean_activity = {
+                'name': details.get('name'),
+                'type': details.get('type'),
+                'start_date_local': details.get('start_date_local'),
+                'distance': details.get('distance', 0) / 1000,
+                'moving_time': details.get('moving_time'),
+                'total_elevation_gain': details.get('total_elevation_gain'),
+                'average_speed': details.get('average_speed', 0) * 3.6,
+                'calories': details.get('calories'),
+                'average_heartrate': details.get('average_heartrate'),
+                'max_heartrate': details.get('max_heartrate')
+            }
+            detailed_activities.append(clean_activity)
+        
+        df = pd.DataFrame(detailed_activities)
+        df.to_csv('recent_detailed_activities.csv', index=False)
+        print(f"Zapisano {len(df)} aktywności")
         
     except Exception as e:
         print(f"Wystąpił błąd: {e}")

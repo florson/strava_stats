@@ -5,3 +5,8 @@ __pycache__/
 conn_test.py
 test.py
 get_token.py
+pola.txt
+recent_detailed_activities.csv
+dzejson.json
+insights.txt
+strava_summary.pbix
