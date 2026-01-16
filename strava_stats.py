@@ -24,9 +24,9 @@ class StravaAPI:
     def handle_rate_limit(self):
         self.request_count += 1
         
-        if self.request_count >= 90:  # Bezpieczny margines przed limitem 100
+        if self.request_count >= 90:  
             time_passed = (datetime.now() - self.last_request_time).total_seconds()
-            if time_passed < 900:  # 15 minut w sekundach
+            if time_passed < 900:  
                 sleep_time = 900 - time_passed
                 print(f"Osiągnięto limit zapytań. Oczekiwanie {sleep_time:.0f} sekund...")
                 time.sleep(sleep_time)
@@ -77,24 +77,22 @@ def main():
     try:
         strava = StravaAPI()
         all_activities = []
-        page = 5
+        page = 1
         per_page = 50
         
-        # Najpierw pobierz listę aktywności
-        for current_page in range(1, page + 1):
-            activities = strava.get_activities(page=current_page, per_page=per_page)
+        while True:
+            activities = strava.get_activities(page=page, per_page=per_page)
             if not activities:
                 break
             all_activities.extend(activities)
-            print(f"Pobrano stronę {current_page}, łącznie {len(all_activities)} aktywności")
+            print(f"Pobrano stronę {page}, łącznie {len(all_activities)} aktywności")
+            page += 1
         
-        # Przetwórz pobrane aktywności
         detailed_activities = []
         for i, activity in enumerate(all_activities, 1):
             print(f"Pobieranie szczegółów aktywności {i}/{len(all_activities)}")
             details = strava.get_activity_details(activity['id'])
             
-            # Wybierz tylko potrzebne pola
             clean_activity = {
                 'name': details.get('name'),
                 'type': details.get('type'),
